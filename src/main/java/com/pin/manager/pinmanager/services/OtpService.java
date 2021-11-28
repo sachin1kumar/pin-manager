@@ -5,6 +5,7 @@ import com.pin.manager.pinmanager.entities.OtpDetail;
 import com.pin.manager.pinmanager.repositories.OtpRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Date;
 import java.util.Random;
@@ -13,6 +14,7 @@ import static com.pin.manager.pinmanager.utils.Constants.*;
 
 //Here, OTP represents PIN as per requirement.
 @Service
+@Transactional
 public class OtpService {
 
     @Autowired
@@ -26,9 +28,9 @@ public class OtpService {
     }
 
     private String getOTP() {
-        String numbers = NUMBERS;
-        Random random = new Random();
-        StringBuilder otp = new StringBuilder();
+        final String numbers = NUMBERS;
+        final Random random = new Random();
+        final StringBuilder otp = new StringBuilder();
 
         for (int index = 0; index < OTP_LENGTH; index++) {
             otp.append(numbers.charAt(random.nextInt(numbers.length())));
@@ -39,13 +41,32 @@ public class OtpService {
     public Otp verifyMsisdn(Otp otp, String msisdn) {
         final String passedOtp = otp.getOtp();
         final Otp response = new Otp();
-        final OtpDetail otpDetail = otpRepository.findByMsisdnAndOtp(msisdn, passedOtp);
+        final OtpDetail otpDetail = otpRepository.findByMsisdnOrOtp(msisdn, passedOtp);
         response.setOtp(passedOtp);
-        if (otpDetail != null && otpDetail.getOtp().equalsIgnoreCase(passedOtp) &&
-            otpDetail.getMsisdn().equalsIgnoreCase(msisdn)) {
-            response.setMessage("User verified");
+        if (otpDetail == null) {
+            response.setMessage("Incorrect MSISDN & OTP!");
+            return response;
+        }
+        int validationCounter = otpDetail.getValidationCounter();
+        if (validationCounter == 0) {
+            response.setMessage("You have exceeded your max limit!");
+            return response;
+        }
+        if (otpDetail.isValidated()) {
+            response.setMessage("User is already verified!");
+            return response;
+        }
+        if (otpDetail.getOtp().equalsIgnoreCase(passedOtp) && otpDetail.getMsisdn().equalsIgnoreCase(msisdn)
+                && !otpDetail.isValidated()) {
+            response.setMessage("User verified!");
+            otpDetail.setValidated(true);
+        } else if (otpDetail.getOtp().equalsIgnoreCase(passedOtp) && !otpDetail.getMsisdn().equalsIgnoreCase(msisdn)) {
+            response.setMessage("Incorrect MSISDN!");
         } else {
-            response.setMessage("Invalid User");
+            response.setMessage("Incorrect OTP!");
+            if (otpRepository.updateAttemptsForVerification(validationCounter - 1, msisdn) < 1) {
+                response.setMessage("Error while updating number of attempts!");
+            }
         }
         return response;
     }
